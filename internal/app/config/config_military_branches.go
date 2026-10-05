@@ -11,6 +11,11 @@ import (
 type Config struct {
 	ServiceHost string
 	ServicePort int
+
+	MinioEndpoint  string
+	MinioAccessKey string
+	MinioSecretKey string
+	MinioBucket    string
 }
 
 func NewConfig() (*Config, error) {

@@ -2,32 +2,62 @@ package repository
 
 import (
 	"army/internal/app/ds"
+	"context"
+	"fmt"
+	"io"
 	"time"
 
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
 type Repository struct {
-	db *gorm.DB
+	db          *gorm.DB
+	minioClient *minio.Client
+	minioBucket string
 }
 
-func New(dsn string) (*Repository, error) {
+func New(
+	dsn string,
+	minioEndpoint string,
+	minioAccessKey string,
+	minioSecretKey string,
+	minioBucket string,
+) (*Repository, error) {
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
 		return nil, err
 	}
 
+	minioClient, err := minio.New(
+		minioEndpoint,
+		&minio.Options{
+			Creds:  credentials.NewStaticV4(minioAccessKey, minioSecretKey, ""),
+			Secure: false,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = minioClient.ListBuckets(context.Background())
+	if err != nil {
+		return nil, err
+	}
+
 	return &Repository{
-		db: db,
+		db:          db,
+		minioClient: minioClient,
+		minioBucket: minioBucket,
 	}, nil
 }
-
 func (r *Repository) GetMilitaryBranches() ([]ds.MilitaryBranch, error) {
 	var militaryBranches []ds.MilitaryBranch
 
 	err := r.db.
-		Where("status != ?", "удален").
+		Where("status = ?", "опубликован").
 		Find(&militaryBranches).Error
 
 	if err != nil {
@@ -121,23 +151,16 @@ func (r *Repository) PublishMilitaryBranch(
 	id int64,
 	description string,
 	speedPlain int,
-	speedMountains int,
-	speedForest int,
-	speedRiver int,
 	food int,
 ) error {
-	return r.db.
-		Model(&ds.MilitaryBranch{}).
-		Where("id = ? AND status = ?", id, "черновик").
+	return r.db.Model(&ds.MilitaryBranch{}).
+		Where("id = ?", id).
 		Updates(map[string]interface{}{
-			"description":     description,
-			"speed_plain":     speedPlain,
-			"speed_mountains": speedMountains,
-			"speed_forest":    speedForest,
-			"speed_river":     speedRiver,
-			"food":            food,
-			"status":          "опубликован",
-			"formed_at":       time.Now(),
+			"description": description,
+			"speed_plain": speedPlain,
+			"food":        food,
+			"status":      "опубликован",
+			"formed_at":   time.Now(),
 		}).Error
 }
 
@@ -176,6 +199,20 @@ func (r *Repository) GetLikesCount(militaryBranchID int64) (int, error) {
 	return int(count), nil
 }
 
+func (r *Repository) CreateLike(like *ds.MilitaryBranchLike) error {
+	return r.db.Create(like).Error
+}
+
+func (r *Repository) DeleteLike(userID int64, militaryBranchID int64) error {
+	return r.db.
+		Where("user_id = ? AND military_branch_id = ?", userID, militaryBranchID).
+		Delete(&ds.MilitaryBranchLike{}).Error
+}
+
+func (r *Repository) CreateUser(user *ds.User) error {
+	return r.db.Create(user).Error
+}
+
 func (r *Repository) GetNextMilitaryBranch(id int64) (*ds.MilitaryBranch, error) {
 	var militaryBranch ds.MilitaryBranch
 
@@ -199,4 +236,41 @@ func (r *Repository) GetNextMilitaryBranch(id int64) (*ds.MilitaryBranch, error)
 	militaryBranch.Video = militaryBranch.VideoURL
 
 	return &militaryBranch, nil
+}
+
+func (r *Repository) UpdateMilitaryBranchImage(id int64, fileName string) error {
+	return r.db.Model(&ds.MilitaryBranch{}).
+		Where("id = ?", id).
+		Update("image_url", fileName).Error
+}
+func (r *Repository) UpdateMilitaryBranchVideo(id int64, fileName string) error {
+	return r.db.Model(&ds.MilitaryBranch{}).
+		Where("id = ?", id).
+		Update("video_url", fileName).Error
+}
+
+func (r *Repository) UploadFile(
+	file io.Reader,
+	size int64,
+	contentType string,
+	extension string,
+) (string, error) {
+	fileName := fmt.Sprintf("%d%s", time.Now().UnixNano(), extension)
+
+	_, err := r.minioClient.PutObject(
+		context.Background(),
+		r.minioBucket,
+		fileName,
+		file,
+		size,
+		minio.PutObjectOptions{
+			ContentType: contentType,
+		},
+	)
+
+	if err != nil {
+		return "", err
+	}
+
+	return fileName, nil
 }

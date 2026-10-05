@@ -1,2 +1,6 @@
 ServiceHost = "localhost"
 ServicePort = 8081
+MinioEndpoint = "localhost:9000"
+MinioAccessKey = "root"
+MinioSecretKey = "rootpassword"
+MinioBucket = "media"

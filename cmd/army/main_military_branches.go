@@ -18,7 +18,13 @@ func main() {
 		log.Fatal(err)
 	}
 
-	repo, err := repository.New(dsn.FromEnv())
+	repo, err := repository.New(
+		dsn.FromEnv(),
+		cfg.MinioEndpoint,
+		cfg.MinioAccessKey,
+		cfg.MinioSecretKey,
+		cfg.MinioBucket,
+	)
 	if err != nil {
 		log.Fatal(err)
 	}
